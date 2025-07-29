@@ -19,12 +19,26 @@ class LLMProvider(Enum):
 
 
 @dataclass
+class TokenUsage:
+    """Detailed token usage and cost information."""
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    input_cost: float  # Cost in USD
+    output_cost: float  # Cost in USD
+    total_cost: float  # Cost in USD
+    cost_per_input_token: float  # Cost per token in USD
+    cost_per_output_token: float  # Cost per token in USD
+
+
+@dataclass
 class LLMResponse:
     """Standardized response format for all LLM providers."""
     content: str
     provider: LLMProvider
     model: str
-    usage: Optional[Dict[str, Any]] = None
+    token_usage: Optional[TokenUsage] = None
+    usage: Optional[Dict[str, Any]] = None  # Raw usage data from provider
     raw_response: Optional[Any] = None
 
 
@@ -42,9 +56,99 @@ class LLMWrapper:
     Supports: OpenAI, Anthropic, Google Gemini, Groq, and Ollama
     """
     
+    # Pricing information (per 1M tokens in USD) - Updated as of July 2025
+    PRICING = {
+        LLMProvider.OPENAI: {
+            "gpt-4": {"input": 30.0, "output": 60.0},
+            "gpt-4-turbo": {"input": 10.0, "output": 30.0},
+            "gpt-4-turbo-preview": {"input": 10.0, "output": 30.0},
+            "gpt-4-0125-preview": {"input": 10.0, "output": 30.0},
+            "gpt-3.5-turbo": {"input": 0.5, "output": 1.5},
+            "gpt-3.5-turbo-16k": {"input": 3.0, "output": 4.0},
+            "gpt-4o": {"input": 5.0, "output": 15.0},
+            "gpt-4o-mini": {"input": 0.15, "output": 0.6},
+        },
+        LLMProvider.ANTHROPIC: {
+            "claude-3-opus-20240229": {"input": 15.0, "output": 75.0},
+            "claude-3-sonnet-20240229": {"input": 3.0, "output": 15.0},
+            "claude-3-haiku-20240307": {"input": 0.25, "output": 1.25},
+            "claude-2.1": {"input": 8.0, "output": 24.0},
+            "claude-2.0": {"input": 8.0, "output": 24.0},
+            "claude-instant-1.2": {"input": 0.8, "output": 2.4},
+        },
+        LLMProvider.GOOGLE: {
+            "gemini-pro": {"input": 0.5, "output": 1.5},
+            "gemini-pro-vision": {"input": 0.5, "output": 1.5},
+            "gemini-1.5-pro": {"input": 3.5, "output": 10.5},
+            "gemini-1.5-flash": {"input": 0.075, "output": 0.3},
+        },
+        LLMProvider.GROQ: {
+            # Groq often has free tiers or very low costs
+            "llama2-70b-4096": {"input": 0.0, "output": 0.0},
+            "mixtral-8x7b-32768": {"input": 0.0, "output": 0.0},
+            "gemma-7b-it": {"input": 0.0, "output": 0.0},
+            "llama3-8b-8192": {"input": 0.05, "output": 0.08},
+            "llama3-70b-8192": {"input": 0.59, "output": 0.79},
+        },
+        LLMProvider.OLLAMA: {
+            # Ollama is local, so no cost
+            "default": {"input": 0.0, "output": 0.0},
+        }
+    }
+    
     def __init__(self):
         self.clients = {}
         self._initialize_clients()
+    
+    def _calculate_cost(self, provider: LLMProvider, model: str, input_tokens: int, output_tokens: int) -> TokenUsage:
+        """Calculate token usage and costs."""
+        # Get pricing for the model
+        provider_pricing = self.PRICING.get(provider, {})
+        
+        # Handle model variations and fallbacks
+        model_pricing = None
+        if model in provider_pricing:
+            model_pricing = provider_pricing[model]
+        else:
+            # Try to find a matching model by checking if the model name contains known models
+            for known_model, pricing in provider_pricing.items():
+                if known_model in model or model in known_model:
+                    model_pricing = pricing
+                    break
+            
+            # If still no match, use default pricing or zero for local models
+            if not model_pricing:
+                if provider == LLMProvider.OLLAMA:
+                    model_pricing = {"input": 0.0, "output": 0.0}
+                else:
+                    # Use a conservative default pricing
+                    model_pricing = {"input": 1.0, "output": 2.0}
+        
+        # Calculate costs (pricing is per 1M tokens)
+        cost_per_input_token = model_pricing["input"] / 1_000_000
+        cost_per_output_token = model_pricing["output"] / 1_000_000
+        
+        input_cost = input_tokens * cost_per_input_token
+        output_cost = output_tokens * cost_per_output_token
+        total_cost = input_cost + output_cost
+        total_tokens = input_tokens + output_tokens
+        
+        return TokenUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+            input_cost=input_cost,
+            output_cost=output_cost,
+            total_cost=total_cost,
+            cost_per_input_token=cost_per_input_token,
+            cost_per_output_token=cost_per_output_token
+        )
+    
+    def _estimate_tokens(self, text: str) -> int:
+        """Estimate token count for text (rough approximation)."""
+        # Very rough estimation: ~4 characters per token for most models
+        # This is not precise but gives a reasonable estimate when exact counts aren't available
+        return max(1, len(text) // 4)
     
     def _initialize_clients(self):
         """Initialize all available clients."""
@@ -152,10 +256,19 @@ class LLMWrapper:
         
         response = client.chat.completions.create(**params)
         
+        # Extract token usage
+        usage = response.usage
+        input_tokens = usage.prompt_tokens if usage else 0
+        output_tokens = usage.completion_tokens if usage else 0
+        
+        # Calculate costs
+        token_usage = self._calculate_cost(LLMProvider.OPENAI, model, input_tokens, output_tokens)
+        
         return LLMResponse(
             content=response.choices[0].message.content,
             provider=LLMProvider.OPENAI,
             model=model,
+            token_usage=token_usage,
             usage=response.usage.model_dump() if response.usage else None,
             raw_response=response
         )
@@ -186,10 +299,19 @@ class LLMWrapper:
         
         response = client.messages.create(**params)
         
+        # Extract token usage
+        usage = response.usage
+        input_tokens = usage.input_tokens if usage else 0
+        output_tokens = usage.output_tokens if usage else 0
+        
+        # Calculate costs
+        token_usage = self._calculate_cost(LLMProvider.ANTHROPIC, model, input_tokens, output_tokens)
+        
         return LLMResponse(
             content=response.content[0].text,
             provider=LLMProvider.ANTHROPIC,
             model=model,
+            token_usage=token_usage,
             usage=response.usage.__dict__ if hasattr(response, 'usage') else None,
             raw_response=response
         )
@@ -199,21 +321,26 @@ class LLMWrapper:
         # Initialize the model
         gemini_model = genai.GenerativeModel(model)
         
-        # Convert messages to Gemini format
+        # Convert messages to Gemini format and estimate input tokens
         chat_history = []
         user_message = ""
+        input_text = ""
         
         for msg in messages:
             if msg["role"] == "system":
                 # Gemini doesn't have explicit system messages, prepend to user message
-                user_message = f"System: {msg['content']}\n\n" + user_message
+                system_text = f"System: {msg['content']}\n\n"
+                user_message = system_text + user_message
+                input_text += system_text
             elif msg["role"] == "user":
                 user_message = msg["content"]
+                input_text += msg["content"]
             elif msg["role"] == "assistant":
                 chat_history.append({
                     "role": "model",
                     "parts": [msg["content"]]
                 })
+                input_text += msg["content"]
         
         # Start chat with history
         chat = gemini_model.start_chat(history=chat_history)
@@ -226,10 +353,25 @@ class LLMWrapper:
         
         response = chat.send_message(user_message, generation_config=generation_config)
         
+        # Estimate token usage (Google doesn't always provide exact counts)
+        input_tokens = self._estimate_tokens(input_text + user_message)
+        output_tokens = self._estimate_tokens(response.text)
+        
+        # Try to get actual usage if available
+        if hasattr(response, 'usage_metadata') and response.usage_metadata:
+            if hasattr(response.usage_metadata, 'prompt_token_count'):
+                input_tokens = response.usage_metadata.prompt_token_count
+            if hasattr(response.usage_metadata, 'candidates_token_count'):
+                output_tokens = response.usage_metadata.candidates_token_count
+        
+        # Calculate costs
+        token_usage = self._calculate_cost(LLMProvider.GOOGLE, model, input_tokens, output_tokens)
+        
         return LLMResponse(
             content=response.text,
             provider=LLMProvider.GOOGLE,
             model=model,
+            token_usage=token_usage,
             usage=None,  # Google doesn't provide detailed usage info in the same format
             raw_response=response
         )
@@ -249,10 +391,25 @@ class LLMWrapper:
         
         response = client.chat.completions.create(**params)
         
+        # Extract token usage
+        usage = response.usage
+        input_tokens = usage.prompt_tokens if usage else 0
+        output_tokens = usage.completion_tokens if usage else 0
+        
+        # If no usage data, estimate
+        if not usage:
+            input_text = " ".join([msg["content"] for msg in messages])
+            input_tokens = self._estimate_tokens(input_text)
+            output_tokens = self._estimate_tokens(response.choices[0].message.content)
+        
+        # Calculate costs
+        token_usage = self._calculate_cost(LLMProvider.GROQ, model, input_tokens, output_tokens)
+        
         return LLMResponse(
             content=response.choices[0].message.content,
             provider=LLMProvider.GROQ,
             model=model,
+            token_usage=token_usage,
             usage=response.usage.__dict__ if hasattr(response, 'usage') else None,
             raw_response=response
         )
@@ -275,10 +432,25 @@ class LLMWrapper:
         
         response = client.chat(**params)
         
+        # Estimate token usage (Ollama doesn't provide token counts)
+        input_text = " ".join([msg["content"] for msg in messages])
+        input_tokens = self._estimate_tokens(input_text)
+        output_tokens = self._estimate_tokens(response["message"]["content"])
+        
+        # Check if Ollama provided any token information
+        if "prompt_eval_count" in response:
+            input_tokens = response["prompt_eval_count"]
+        if "eval_count" in response:
+            output_tokens = response["eval_count"]
+        
+        # Calculate costs (Ollama is local, so cost is 0)
+        token_usage = self._calculate_cost(LLMProvider.OLLAMA, model, input_tokens, output_tokens)
+        
         return LLMResponse(
             content=response["message"]["content"],
             provider=LLMProvider.OLLAMA,
             model=model,
+            token_usage=token_usage,
             usage=None,  # Ollama doesn't provide usage info in the same format
             raw_response=response
         )
@@ -361,6 +533,71 @@ class LLMWrapper:
     def is_provider_available(self, provider: LLMProvider) -> bool:
         """Check if a provider is available and properly configured."""
         return provider in self.clients and self.clients[provider] is not None
+    
+    def get_cost_summary(self, responses: List[LLMResponse]) -> Dict[str, Any]:
+        """
+        Generate a cost summary from multiple responses.
+        
+        Args:
+            responses: List of LLMResponse objects
+            
+        Returns:
+            Dictionary with cost breakdown by provider and totals
+        """
+        summary = {
+            "total_cost": 0.0,
+            "total_input_tokens": 0,
+            "total_output_tokens": 0,
+            "total_tokens": 0,
+            "by_provider": {},
+            "by_model": {}
+        }
+        
+        for response in responses:
+            if response.token_usage:
+                usage = response.token_usage
+                provider_name = response.provider.value
+                model_name = response.model
+                
+                # Update totals
+                summary["total_cost"] += usage.total_cost
+                summary["total_input_tokens"] += usage.input_tokens
+                summary["total_output_tokens"] += usage.output_tokens
+                summary["total_tokens"] += usage.total_tokens
+                
+                # Update by provider
+                if provider_name not in summary["by_provider"]:
+                    summary["by_provider"][provider_name] = {
+                        "cost": 0.0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "total_tokens": 0,
+                        "requests": 0
+                    }
+                
+                summary["by_provider"][provider_name]["cost"] += usage.total_cost
+                summary["by_provider"][provider_name]["input_tokens"] += usage.input_tokens
+                summary["by_provider"][provider_name]["output_tokens"] += usage.output_tokens
+                summary["by_provider"][provider_name]["total_tokens"] += usage.total_tokens
+                summary["by_provider"][provider_name]["requests"] += 1
+                
+                # Update by model
+                if model_name not in summary["by_model"]:
+                    summary["by_model"][model_name] = {
+                        "cost": 0.0,
+                        "input_tokens": 0,
+                        "output_tokens": 0,
+                        "total_tokens": 0,
+                        "requests": 0
+                    }
+                
+                summary["by_model"][model_name]["cost"] += usage.total_cost
+                summary["by_model"][model_name]["input_tokens"] += usage.input_tokens
+                summary["by_model"][model_name]["output_tokens"] += usage.output_tokens
+                summary["by_model"][model_name]["total_tokens"] += usage.total_tokens
+                summary["by_model"][model_name]["requests"] += 1
+        
+        return summary
 
 
 # Example usage and convenience functions

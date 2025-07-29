@@ -59,11 +59,23 @@ messages = [
 ### Response Format
 ```python
 @dataclass
+class TokenUsage:
+    input_tokens: int              # Number of input tokens
+    output_tokens: int             # Number of output tokens
+    total_tokens: int              # Total tokens used
+    input_cost: float              # Cost for input tokens (USD)
+    output_cost: float             # Cost for output tokens (USD)
+    total_cost: float              # Total cost (USD)
+    cost_per_input_token: float    # Rate per input token (USD)
+    cost_per_output_token: float   # Rate per output token (USD)
+
+@dataclass
 class LLMResponse:
     content: str                    # The generated text
     provider: LLMProvider          # Which provider was used
     model: str                     # Which model was used
-    usage: Optional[Dict]          # Token usage information
+    token_usage: TokenUsage        # Detailed token and cost info
+    usage: Optional[Dict]          # Raw usage data from provider
     raw_response: Optional[Any]    # Original provider response
 ```
 
@@ -86,18 +98,71 @@ Simplified interface for single prompt/response interactions.
 #### `list_models(provider: LLMProvider)`
 List available models for a provider.
 
-#### `is_provider_available(provider: LLMProvider)`
-Check if a provider is properly configured and available.
+#### `get_cost_summary(responses: List[LLMResponse])`
 
-### Convenience Functions
+Generate a comprehensive cost summary from multiple responses.
 
-#### `quick_chat(provider_name, model, prompt, system_prompt=None)`
-Quick one-liner for simple chat interactions.
+## Token Usage and Cost Tracking
 
-#### `create_wrapper()`
-Factory function to create a new LLMWrapper instance.
+The library automatically tracks token usage and calculates costs for each request:
+
+```python
+response = wrapper.chat(LLMProvider.OPENAI, "gpt-3.5-turbo", messages)
+
+if response.token_usage:
+    usage = response.token_usage
+    print(f"Input tokens: {usage.input_tokens}")
+    print(f"Output tokens: {usage.output_tokens}")
+    print(f"Total tokens: {usage.total_tokens}")
+    print(f"Input cost: ${usage.input_cost:.6f}")
+    print(f"Output cost: ${usage.output_cost:.6f}")
+    print(f"Total cost: ${usage.total_cost:.6f}")
+```
+
+### Cost Summary Across Multiple Requests
+
+```python
+responses = []
+responses.append(wrapper.chat(LLMProvider.OPENAI, "gpt-3.5-turbo", messages1))
+responses.append(wrapper.chat(LLMProvider.ANTHROPIC, "claude-3-haiku-20240307", messages2))
+
+summary = wrapper.get_cost_summary(responses)
+print(f"Total cost: ${summary['total_cost']:.6f}")
+print(f"Total tokens: {summary['total_tokens']}")
+
+# Cost breakdown by provider
+for provider, data in summary['by_provider'].items():
+    print(f"{provider}: ${data['cost']:.6f} ({data['total_tokens']} tokens)")
+```
+
+### Pricing Information
+
+The library includes up-to-date pricing for all supported providers:
+
+- **OpenAI**: GPT-4, GPT-3.5-turbo, GPT-4-turbo, etc.
+- **Anthropic**: Claude-3 (Opus, Sonnet, Haiku), Claude-2
+- **Google**: Gemini Pro, Gemini 1.5 Pro/Flash
+- **Groq**: Often free or very low cost
+- **Ollama**: Free (local execution)
+
+Pricing is automatically updated based on the model used and calculates costs per token.
 
 ## Usage Examples
+
+### Basic Chat with Cost Tracking
+
+```python
+wrapper = LLMWrapper()
+response = wrapper.chat(
+    LLMProvider.OPENAI,
+    "gpt-3.5-turbo",
+    [Message("user", "Hello, world!")]
+)
+
+print(f"Response: {response.content}")
+if response.token_usage:
+    print(f"Cost: ${response.token_usage.total_cost:.6f}")
+```
 
 ### Basic Chat
 ```python

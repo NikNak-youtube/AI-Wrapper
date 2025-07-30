@@ -99,6 +99,16 @@ Simplified interface for single prompt/response interactions.
 #### `list_models(provider: LLMProvider)`
 List available models for a provider.
 
+#### `get_embeddings(provider: LLMProvider, text: str, model: Optional[str] = None)`
+Get embeddings for text using the specified provider.
+
+- **Supported providers**: OpenAI, Groq, xAI, Ollama
+- **Default models**: 
+  - OpenAI/Groq/xAI: `text-embedding-3-small`
+  - Ollama: `nomic-embed-text`
+- **Returns**: List of floats representing the embedding vector
+- **Raises**: `ValueError` if provider doesn't support embeddings
+
 #### `get_cost_summary(responses: List[LLMResponse])`
 
 Generate a comprehensive cost summary from multiple responses.
@@ -221,6 +231,40 @@ response = wrapper.simple_chat(
     "llama2",
     "What is the capital of France?"
 )
+```
+
+### Using Embeddings
+```python
+# Get embeddings from OpenAI
+embeddings = wrapper.get_embeddings(
+    LLMProvider.OPENAI,
+    "The quick brown fox jumps over the lazy dog"
+)
+print(f"Embedding dimension: {len(embeddings)}")
+
+# Use a specific embedding model
+embeddings = wrapper.get_embeddings(
+    LLMProvider.OPENAI,
+    "Sample text",
+    model="text-embedding-ada-002"
+)
+
+# Try Ollama embeddings (requires embedding model like nomic-embed-text)
+# ollama pull nomic-embed-text
+try:
+    embeddings = wrapper.get_embeddings(
+        LLMProvider.OLLAMA,
+        "Local embeddings test"
+    )
+except ValueError as e:
+    print(f"Ollama embeddings not available: {e}")
+
+# Note: Anthropic and Google don't support embeddings
+# This will raise ValueError
+try:
+    embeddings = wrapper.get_embeddings(LLMProvider.ANTHROPIC, "test")
+except ValueError as e:
+    print(e)  # "Provider anthropic does not support embeddings"
 ```
 
 ## Configuration

@@ -8,6 +8,7 @@ A unified Python library that provides a consistent interface for multiple Large
 - **Anthropic** (Claude models)
 - **Google** (Gemini models)
 - **Groq** (Fast inference)
+- **xAI** (Grok models)
 - **Ollama** (Local models)
 
 ## Installation
@@ -143,6 +144,7 @@ The library includes up-to-date pricing for all supported providers:
 - **Anthropic**: Claude-3 (Opus, Sonnet, Haiku), Claude-2
 - **Google**: Gemini Pro, Gemini 1.5 Pro/Flash
 - **Groq**: Often free or very low cost
+- **xAI**: Grok models with competitive pricing
 - **Ollama**: Free (local execution)
 
 Pricing is automatically updated based on the model used and calculates costs per token.
@@ -231,6 +233,7 @@ export OPENAI_API_KEY="your-openai-key"
 export ANTHROPIC_API_KEY="your-anthropic-key"
 export GOOGLE_API_KEY="your-google-key"
 export GROQ_API_KEY="your-groq-key"
+export XAI_API_KEY="your-xai-key"
 ```
 
 ### Manual Configuration
@@ -238,6 +241,7 @@ export GROQ_API_KEY="your-groq-key"
 wrapper = LLMWrapper()
 wrapper.set_api_key(LLMProvider.OPENAI, "your-openai-key")
 wrapper.set_api_key(LLMProvider.ANTHROPIC, "your-anthropic-key")
+wrapper.set_api_key(LLMProvider.XAI, "your-xai-key")
 ```
 
 ## Common Model Names
@@ -261,6 +265,10 @@ wrapper.set_api_key(LLMProvider.ANTHROPIC, "your-anthropic-key")
 - `llama2-70b-4096`
 - `mixtral-8x7b-32768`
 - `gemma-7b-it`
+
+### xAI
+- `grok-beta`
+- `grok-vision-beta`
 
 ### Ollama
 - `llama2`
@@ -305,6 +313,11 @@ except Exception as e:
 - Requires API key
 - Fast inference
 - Limited model selection
+
+### xAI
+- Requires API key
+- Uses OpenAI-compatible API
+- Grok models with real-time information access
 
 ### Ollama
 - No API key required

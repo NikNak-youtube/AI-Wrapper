@@ -31,6 +31,7 @@ def main():
     # wrapper.set_api_key(LLMProvider.ANTHROPIC, "your-anthropic-key")
     # wrapper.set_api_key(LLMProvider.GOOGLE, "your-google-key")
     # wrapper.set_api_key(LLMProvider.GROQ, "your-groq-key")
+    # wrapper.set_api_key(LLMProvider.XAI, "your-xai-key")
     
     # Example 1: Simple chat with token usage and cost tracking
     print("=== Example 1: Simple Chat with Cost Tracking ===")
@@ -78,6 +79,26 @@ def main():
                 print(f"  Cost - Input: ${usage.input_cost:.6f}, Output: ${usage.output_cost:.6f}, Total: ${usage.total_cost:.6f}")
     except Exception as e:
         print(f"Anthropic error: {e}")
+    
+    # xAI Grok
+    try:
+        if wrapper.is_provider_available(LLMProvider.XAI):
+            response = wrapper.chat(
+                LLMProvider.XAI,
+                "grok-beta",
+                [Message("system", "You are a helpful science teacher."),
+                 Message("user", prompt)],
+                temperature=0.7,
+                max_tokens=500
+            )
+            responses.append(response)
+            print(f"xAI Grok Response: {response.content[:100]}...")
+            if response.token_usage:
+                usage = response.token_usage
+                print(f"  Tokens - Input: {usage.input_tokens}, Output: {usage.output_tokens}")
+                print(f"  Cost - Input: ${usage.input_cost:.6f}, Output: ${usage.output_cost:.6f}, Total: ${usage.total_cost:.6f}")
+    except Exception as e:
+        print(f"xAI error: {e}")
     
     # Ollama (local - free)
     try:
@@ -148,6 +169,7 @@ def main():
     providers_to_test = [
         (LLMProvider.OPENAI, "gpt-3.5-turbo"),
         (LLMProvider.ANTHROPIC, "claude-3-haiku-20240307"),
+        (LLMProvider.XAI, "grok-beta"),
         (LLMProvider.OLLAMA, "llama2"),
     ]
     

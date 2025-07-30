@@ -15,6 +15,7 @@ class LLMProvider(Enum):
     ANTHROPIC = "anthropic"
     GOOGLE = "google"
     GROQ = "groq"
+    XAI = "xai"  # xAI Grok
     OLLAMA = "ollama"
 
 
@@ -53,7 +54,7 @@ class LLMWrapper:
     """
     Unified wrapper for multiple LLM providers.
     
-    Supports: OpenAI, Anthropic, Google Gemini, Groq, and Ollama
+    Supports: OpenAI, Anthropic, Google Gemini, Groq, xAI Grok, and Ollama
     """
     
     # Pricing information (per 1M tokens in USD) - Updated as of July 2025
@@ -89,6 +90,11 @@ class LLMWrapper:
             "gemma-7b-it": {"input": 0.0, "output": 0.0},
             "llama3-8b-8192": {"input": 0.05, "output": 0.08},
             "llama3-70b-8192": {"input": 0.59, "output": 0.79},
+        },
+        LLMProvider.XAI: {
+            # xAI Grok pricing (as of July 2025)
+            "grok-beta": {"input": 5.0, "output": 15.0},
+            "grok-vision-beta": {"input": 5.0, "output": 15.0},
         },
         LLMProvider.OLLAMA: {
             # Ollama is local, so no cost
@@ -174,6 +180,15 @@ class LLMWrapper:
             print(f"Warning: Groq client initialization failed: {e}")
         
         try:
+            # xAI client uses OpenAI-compatible API
+            self.clients[LLMProvider.XAI] = openai.OpenAI(
+                api_key="",  # Will be set when user calls set_api_key
+                base_url="https://api.x.ai/v1"
+            )
+        except Exception as e:
+            print(f"Warning: xAI client initialization failed: {e}")
+        
+        try:
             # Ollama client is initialized when needed
             self.clients[LLMProvider.OLLAMA] = ollama
         except Exception as e:
@@ -189,6 +204,11 @@ class LLMWrapper:
             genai.configure(api_key=api_key)
         elif provider == LLMProvider.GROQ:
             self.clients[provider] = groq.Groq(api_key=api_key)
+        elif provider == LLMProvider.XAI:
+            self.clients[provider] = openai.OpenAI(
+                api_key=api_key,
+                base_url="https://api.x.ai/v1"
+            )
     
     def chat(
         self,
@@ -224,6 +244,8 @@ class LLMWrapper:
             return self._chat_google(model, formatted_messages, temperature, max_tokens, **kwargs)
         elif provider == LLMProvider.GROQ:
             return self._chat_groq(model, formatted_messages, temperature, max_tokens, **kwargs)
+        elif provider == LLMProvider.XAI:
+            return self._chat_xai(model, formatted_messages, temperature, max_tokens, **kwargs)
         elif provider == LLMProvider.OLLAMA:
             return self._chat_ollama(model, formatted_messages, temperature, max_tokens, **kwargs)
         else:
@@ -414,6 +436,44 @@ class LLMWrapper:
             raw_response=response
         )
     
+    def _chat_xai(self, model: str, messages: List[Dict], temperature: float, max_tokens: Optional[int], **kwargs) -> LLMResponse:
+        """Handle xAI Grok chat completion."""
+        client = self.clients[LLMProvider.XAI]
+        
+        params = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            **kwargs
+        }
+        if max_tokens:
+            params["max_tokens"] = max_tokens
+        
+        response = client.chat.completions.create(**params)
+        
+        # Extract token usage
+        usage = response.usage
+        input_tokens = usage.prompt_tokens if usage else 0
+        output_tokens = usage.completion_tokens if usage else 0
+        
+        # If no usage data, estimate
+        if not usage:
+            input_text = " ".join([msg["content"] for msg in messages])
+            input_tokens = self._estimate_tokens(input_text)
+            output_tokens = self._estimate_tokens(response.choices[0].message.content)
+        
+        # Calculate costs
+        token_usage = self._calculate_cost(LLMProvider.XAI, model, input_tokens, output_tokens)
+        
+        return LLMResponse(
+            content=response.choices[0].message.content,
+            provider=LLMProvider.XAI,
+            model=model,
+            token_usage=token_usage,
+            usage=response.usage.model_dump() if response.usage else None,
+            raw_response=response
+        )
+    
     def _chat_ollama(self, model: str, messages: List[Dict], temperature: float, max_tokens: Optional[int], **kwargs) -> LLMResponse:
         """Handle Ollama chat completion."""
         client = self.clients[LLMProvider.OLLAMA]
@@ -523,6 +583,10 @@ class LLMWrapper:
                         "llama2-70b-4096",
                         "mixtral-8x7b-32768",
                         "gemma-7b-it"
+                    ],
+                    LLMProvider.XAI: [
+                        "grok-beta",
+                        "grok-vision-beta"
                     ]
                 }
                 return model_lists.get(provider, [])
@@ -611,7 +675,7 @@ def quick_chat(provider_name: str, model: str, prompt: str, system_prompt: Optio
     Quick chat function for simple use cases.
     
     Args:
-        provider_name: Name of the provider ("openai", "anthropic", "google", "groq", "ollama")
+        provider_name: Name of the provider ("openai", "anthropic", "google", "groq", "xai", "ollama")
         model: Model name
         prompt: User prompt
         system_prompt: Optional system prompt
